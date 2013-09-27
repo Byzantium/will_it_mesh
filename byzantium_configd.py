@@ -37,6 +37,7 @@ random.seed()
 defaults = byzantium.conf('will_it_mesh.conf')
 logger = defaults.utils.get_logger('will_it_mesh')
 
+# map of IEEE802.11 channels to frequencies in GHz
 freq_chan_dict = {
         "2.4GHz":{1: 2.412, 2: 2.417, 3: 2.422, 4: 2.427, 5: 2.432, 6: 2.437, 7: 2.442, 8: 2.447, 9: 2.452, 10: 2.457, 11: 2.462, 12: 2.467, 13: 2.472, 14: 2.484},
         "3.6GHz":{131: 3.6575, 132: 3.66, 133: 3.665, 134: 3.67, 135: 3.6775, 136: 3.68, 137: 3.685, 138: 3.69}

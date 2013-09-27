@@ -44,6 +44,13 @@ freq_chan_dict = {
         }
 
 def shell(*cmd, **kwargs):
+    """ Wrapper for subprocess with some bells and whistles.
+    @param  *cmd        List of strings that are passed to subprocess.Popen
+    @param  **kwargs    See following parameters.
+    @param  pipe        Boolean, if True then return stdout from the subprocess.
+    @param  delay       Int, denoting the time in seconds to delay after running the command.
+    @return             Return code or String if `pipe` is True.
+    """
     if 'pipe' in kwargs and kwargs['pipe']:
         retval = subprocess.Popen(cmd, stdout=subprocess.PIPE).stdout
     retval = subprocess.Popen(cmd)
@@ -52,14 +59,29 @@ def shell(*cmd, **kwargs):
     return retval
 
 def ifconfig(*args, **kwargs):
+    """Wrapper for ifconfig
+    @param  *cmd        argumants to pass to ifconfig
+    @param  **kwargs    See `shell` docs for **kwargs
+    @return             See `shell` docs for @return
+    """
     cmd = ['/sbin/ifconfig']+args
     return shell(*cmd, **kwargs)
 
 def iwconfig(*args, **kwargs):
+    """Wrapper for iwconfig
+    @param  *cmd        argumants to pass to iwconfig
+    @param  **kwargs    See `shell` docs for **kwargs
+    @return             See `shell` docs for @return
+    """ 
     cmd = ['/sbin/iwconfig']+args
     return shell(*cmd, **kwargs)
 
 def route(*args, **kwargs):
+    """Wrapper for route
+    @param  *cmd        argumants to pass to route
+    @param  **kwargs    See `shell` docs for **kwargs
+    @return             See `shell` docs for @return
+    """ 
     cmd = ['/sbin/route']+args
     return shell(*cmd, **kwargs)
 
@@ -68,69 +90,130 @@ def arping(*args, **kwargs):
     shell(*cmd, **kwargs)
 
 def convert_frequency_to_channel(frequency, spectrum=defaults.get("mesh", "spectrum")):
+    """ Convert frequencies (channel center) into corresponding IEEE802.11 channels
+    @param  frequency       String, center of channel frequency (in GHz) of a channel in the IEEE802.11 band specified by `spectrum`
+    @param  spectrum        String, of value "2.4GHz", "3.6GHz", or "5GHz" specifying the IEEE802.11 band `frequency is in`
+    @return                 String, of the channel number or None if not found.
+    """
     for chan, freq in freq_chan_dict[spectrum].itmes():
-        if frequency == str(freq): return chan
+        if frequency == str(freq): return str(chan)
     return None
 
 def convert_channel_to_frequency(channel, spectrum=defaults.get("mesh", "spectrum")):
-    if channel in freq_chan_dict[spectrum]: return freq_chan_dict[spectrum][channel]
+    """ Convert frequencies (channel center) into corresponding IEEE802.11 channels
+    @param  channel         String, of channel number in the IEEE802.11 band specified by `spectrum`
+    @param  spectrum        String, of value "2.4GHz", "3.6GHz", or "5GHz" specifying the IEEE802.11 band `frequency is in`
+    @return                 String, of the frequency in GHz or None if not found.
+    """
+    channel = int(channel, 10)
+    if channel in freq_chan_dict[spectrum]: return str(freq_chan_dict[spectrum][channel])
     return None
 
 class IFace:
+    """Network Interface Class"""
+    # IEEE802.11 channel number (String)
     channel = defaults.get('mesh', 'channel')
+    # BSSID (String)
     bssid = defaults.get('mesh', 'bssid')
+    # ESSID (String)
     essid = defaults.get('mesh', 'essid')
+    # IPv6 Address (String) Not currently used
     ipv6 = None
+    # IPv4 Address (String)
     ipv4 = None
+    # IPv4 Netmask (String)
     netmask = defaults.get('mesh', 'ipv4_netmask')
+    # Network Interface name (String, ie "eth0")
     device = None
+    # delay between iwconfig commands when setting up the mesh interface
     cmd_delay = defaults.get("configd", "inter-command-delay", set_type=int, default=5)
+    # used to make a distinction between mesh and client interfaces for a few things
     am_client = False
+    # byzantium.config config section
     config_section = "mesh"
+    # the name to give the logger in messages we create
     logger_ID = "Mesh"
 
     def frequency(self):
+        """ Return the frequency that corresponds to our channel
+        @return         String, frequency in GHz
+        """
         return convert_channel_to_frequency(self.channel)
 
     def set_down(self):
-        """ Turn off the interface. """
+        """ Turn off the interface. 
+        Runs ifconfig <interface> down
+        @return         Return value of iwconfig
+        """
         return ifconfig(self.device, 'down', delay=cmd_delay)
 
     def set_up(self):
-        """ Turn on the interface. """
+        """ Turn on the interface.
+        Runs ifconfig <interface> up
+        @return         Return value of iwconfig
+        """
         return ifconfig(self.device, 'up', delay=cmd_delay)
 
     def set_mode(self, new_mode=None):
+        """ Set the mode of operation for the wireless device.
+        @param  new_mode    String, mode to set the device to if the one in self.mode is not wanted.
+        @return         Return value of iwconfig
+        """
         return iwconfig(self.device, 'mode', new_mode or self.mode, delay=cmd_delay)
 
     def set_essid(self, new_essid=None):
+        """ Set the ESSID of the AP to connect to or the ESSID to announce while running in AdHoc mode.
+        @return         Return value of iwconfig
+        """
         return iwconfig(self.device, 'essid', new_essid or self.essid, delay=cmd_delay)
 
     def set_bssid(self, new_bssid=None):
+        """ Set the BSSID of the AdHoc network to connect to.
+        @return         Return value of iwconfig
+        """
         return iwconfig(self.device, 'ap', wireless.bssid, delay=cmd_delay)
 
     def set_channel(self, new_channel=None):
+        """ Set the IEEE802.11 channel of the wireless interface.
+        @return         Return value of iwconfig
+        """
         return iwconfig(self.device, 'channel', channel or self.channel, delay=cmd_delay)
 
     def validate(self):
+        """ Check if the values returned by iwconfig match what we want set.
+        @return     Boolean, True if values are correct, False if they are not.
+        """
+        # Ask iwconfig what it sees
         output = iwconfig(self.device, pipe=True)
+        # parse the output from iwconfig into chunks we can recognize
         mode, essid, bssid, freq = self._parse_iwconfig(output.readlines())
+        # Is our mode correct?
         if not self.correct_mode(mode):
             logger.debug("Wrong mode (%s) on interface %s", mode, self.device)
             return False
+        # Is our ESSID correct? 
         elif not self.correct_essid(essid):
             logger.debug("Wrong ESSID (%s) on interface %s", essid, self.device)
             return False
+        # Is our BSSID Correct
         elif not self.correct_bssid(bssid):
             logger.debug("Wrong BSSID (%s) on interface %s", bssid, self.device)
             return False
+        # Is our frequency/channel correct?
         elif not self.correct_frequency(freq):
             logger.debug("Wrong frequency (%s) on interface %s", freq, self.device)
             return False
+        # Since nothing was wrong we return True
         return True
 
     def _parse_iwconfig(self, output):
+        """ Parse the output of iwconfig into the values we require for checking.
+        @param  output  List of lines of output from iwconfig
+        @return         Tuple (mode, essid, bssid, freq)
+        """
+        # set everything to None so it exists on the other end and is clearly unset if it isn't found
         mode, essid, bssid, freq = None
+        # go line by line and pull out values
         for line in output:
             if re.search("Mode", line):
                 mode = line.split(' ')[0].split(':')[1]
@@ -143,61 +226,102 @@ class IFace:
         return mode, essid, bssid, freq
 
     def correct_mode(self, real_mode):
-        """ Correct mode? """
+        """ Correct mode?
+        @param  real_mode   String, the mode found by iwconfig.
+        @return             Boolean, True if they match False if not
+        """
         if real_mode == self.mode: return True
         return False
 
     def correct_essid(self, real_essid):
-        """ Correct ESSID? """
+        """ Correct ESSID?
+        @param  real_mode   String, the ESSID found by iwconfig.
+        @return             Boolean, True if they match False if not
+        """
         if real_essid == self.essid: return True
         return False
 
     def correct_bssid(self, real_bssid):
-        """ Correct BSSID? """
+        """ Correct BSSID?
+        @param  real_mode   String, the BSSID found by iwconfig.
+        @return             Boolean, True if they match False if not
+        """
         if real_bssid == self.bssid: return True
         return False
 
     def correct_frequency(self, real_freq):
-        """ Correct frequency? """
+        """ Correct frequency?
+        @param  real_mode   String, the frequency (in GHz) found by iwconfig.
+        @return             Boolean, True if they match False if not
+        """
         # Correct *frequency* (because iwconfig doesn't report channels)?
         if real_freq == self.frequency(): return True
         return False
 
     def random_ip_v4(self, network, netmask):
-        """ Generate a pseudorandom IP address """
+        """ Generate a pseudorandom IP address
+        @param  network     String, network description (ie 192.168.0.0)
+        @param  netmask     (not used but should be) String, netmask for the whole space available to guess in (ie. 255.255.0.0 for 192.168.0.0-192.168.255.0) specified as 'gen_netmask' in settings
+        @return             String, a psuedorandom IPv4 address
+        """
+        # For every octet in `network` that is '0' pick a random replacement
+        # counting in reverse so we don't hit a '0' that occurs before a non-'0'
         for octet in range(0, len(network)).reverse():
-            if network[octet] == '0':
-                network[octet] = str(random.randint(0, 254))
+            if network[octet] != '0': break
+            network[octet] = str(random.randint(0, 254))
         return network
 
     def _arping(self, addr):
+        """ Wrapper over the wrapper of arping
+        @param          String, ip address to arping
+        @return         Return value of arping
+        """
         return arping( '-c', '5', '-D', '-f', '-q', '-I', self.device, addr)
 
     def get_ip_v4_addr(self, network=defaults.get("mesh", "gen_netmask"), netmask=defaults.get("mesh", "gen_netmask")):
+        """ Get an IPv4 address for this interface
+        @param  network     String, the network description (ie. 192.168.0.0)
+        @param  netmask     String, the netmask for generating the new IP
+        @return             String, the new IPv4 address
+        """
+        # make the IP-like strings into arrays
         network = network.split('.')
         netmask = netmask.split('.')
+        # get a pseudorandom IP
         addr = self.random_ip_v4([network], [netmask])
+        # if this is a client interface set the last octet to '1'
         if self.am_client: addr[-1] = "1"
         addr = '.'.join(addr)
+        # try to find an unused IP
         while not self._arping(addr):
             addr = self.random_ip_v4([network], [netmask])
+        # use the last one tried even if it was in use.
         self.ipv4 = addr
         return self.ipv4
 
     def load(self):
+        """ Get the interface up and running"""
         self.get_ip_v4_addr(defaults.get(self.config_section, 'ipv4_network'), defaults.get(self.config_section, 'gen_netmask')
         self.set_ip()
         self.set_up()
         logger.info("%s interface %s configured." % (self.logger_ID, self.device))
 
 class MeshIface(IFace):
+    """ Mesh network interface"""
     config_section = "mesh"
     logger_ID = "Mesh"
 
     def __init__(self, device):
+        """Set the device name on initialization
+        @param  device      String, network device name (ie. 'eth0')
+        """
         self.device = device
 
     def configure(self, max_tries=defaults.get("configd", "max-tries", set_type=int, default=15)):
+        """ Attempt to configure the mesh interface with iwconfig
+        @param  max_tries       Int, Maximum number of times to attempt to configure the interface.
+        @return                 Boolean, True if successful, False if not
+        """
         logger.info("Attempting to configure interface %s." % wireless)
         # Turn off the interface.
         self.set_down()
@@ -217,50 +341,72 @@ class MeshIface(IFace):
             remaining_attempts -= 1
         # Turn the interface back on.
         self.set_up()
+        # return whether we failed hard or succeeded
         return self.validate()
 
 class ClientIFace(IFace):
+    """ Client network interface """
     config_section = "client"
     logger_ID = "Client"
+    am_client = True
     def __init__(self, device, sub_device_number=None):
-        self.am_client = True
+        """Set the device name on initialization
+        @param  device              String, network device name (ie. 'eth0')
+        @param  sub_device_number   Int or String of the digit to append as the subdevice number
+        """
         if sub_device_number != None:
             self.device = "%s:%s" % (device, str(sub_device_number))
         else:
+            # if we don't get a subdevice number we will pretend we don't need one
             self.device = device
 
 def start_captive_portal(mesh, client):
+    """ Start the captive portal
+    @param  mesh        MeshIface instance
+    @param  client      ClientIFace instance
+    @return             Return value of captive_portal.py
+    """
     script_path = defaults.get('captive-portal', 'script', default='captive_portal.py')
     return shell(script_path, '-i', client.device, '-a', client.ipv4)
 
 def get_network_devices(exclude=[]):
-    """ Enumerate all network interfaces. 
+    """ Enumerate all network interfaces.
+    @param  exclude     List of network deices to exclude. ('lo' is always excluded)
+    @return             List of network devices present.
     """
+    # get a list of all of the network devices available now.
     interfaces = os.listdir('/sys/class/net')
     # Remove the loopback interface and any other specified interfaces
     for x in exclude+['lo']:
         if x in interfaces:
             interfaces.remove(x)
+    # if we don't find anything pitch a fit
     if not interfaces:
         raise byzantium.exception.DeviceException("ERROR: No interfaces found.")
+    return interfaces
 
 def get_wireless_devices(exclude=[]):
     """ Enumerate all the wireless interfaces.
+    @param  exclude     List of network deices to exclude. ('lo' is always excluded)
+    @return             List of wireless network devices present.
     """
-    get_network_devices(exclude)
+    net_devices = get_network_devices(exclude=exclude)
     # For each network interface's pseudofile in /sys, test to see if a
     # subdirectory 'wireless/' exists.  Use this to sort the list of
     # interfaces into wired and wireless.
     wireless = []
-    for i in interfaces:
+    for i in net_devices:
         if os.path.isdir("/sys/class/net/%s/wireless" % i):
             wireless.append(i)
+    # if we don't find any wireless devices pitch a fit
     if not wireless:
         raise byzantium.exception.DeviceException("ERROR: No wireless interfaces found.")
     return wireless
 
 def make_hosts_file(mesh, client):
     """ Generate and write /etc/hosts.mesh from the values given by `client` and `mesh`
+    @param  mesh        MeshIface instance
+    @param  client      ClientIFace instance
     """
     # Build a string which can be used as a template for an /etc/hosts style file.
     prefix = '.'.join(client.ipv4.split('.')[:3])
@@ -276,7 +422,10 @@ def make_hosts_file(mesh, client):
     hosts.close()
 
 def make_dnsmasq_include(mesh, client):
-    """ Generate an /etc/dnsmasq.conf.include file. """
+    """ Generate an /etc/dnsmasq.conf.include file.
+    @param  mesh        MeshIface instance
+    @param  client      ClientIFace instance
+    """
     prefix = '.'.join(client.ipv4.split('.')[:3])
     ipv4_template = "%s.%d"
     start = ipv4_template % (prefix, 2)
@@ -287,44 +436,52 @@ def make_dnsmasq_include(mesh, client):
     include_file.close()
 
 def init_dnsmasq(action="restart"):
-    """ poke at dnsmasq. """
+    """ Poke at dnsmasq. 
+    @param  action      String, parameter to pass to /etc/rc.d/rc.dnsmasq. It must be valid as per that script's requirements.
+    @return             Return value of '/etc/rc.d/rc.dnsmasq'
+    """
     logger.info("%s dnsmasq." % action.upper())
     return shell('/etc/rc.d/rc.dnsmasq', action.lower())
 
 def start_olsrd(mesh):
-    """ poke at olsrd. """
+    """ Start olsrd.
+    @param  mesh        MeshIface instance
+    @return             Return value of '/usr/sbin/olsrd'
+    """
     logger.info("Starting routing daemon.")
     return shell('/usr/sbin/olsrd', '-i', mesh.device)
 
 def add_commotion_route(mesh, client):
+    """ Add the Commotion-Wireless route to the route table so we can jump in on their networks.
+    @param  mesh        MeshIface instance
+    @param  client      ClientIFace instance
+    @return             Return value of 'route'
+    """
     # Add a route for any Commotion nodes nearby.
     logger.info("Adding Commotion route...")
-    route('add', '-net', defaults.get("commotion", "ipv4_network"), 'netmask', defaults.get("commotion", "ipv4_netmask"), 'dev', mesh.device)
-
-
-    # Start the captive portal daemon on that interface.
-    start_captive_portal(mesh, client)
-    logger.info("Started captive portal daemon.")
-
-    make_hosts_file(mesh, client)
-    make_dnsmasq_include(mesh, client)
-    init_dnsmasq(action="restart")
-    start_olsrd(mesh)
+    return route('add', '-net', defaults.get("commotion", "ipv4_network"), 'netmask', defaults.get("commotion", "ipv4_netmask"), 'dev', mesh.device)
 
 def main(args):
+    """ Entry point of script.
+    @param  args    List of arguments passed to the script
+    """
     excludes = []
     # eventually grab values from the commandline args here
+    # this throws exceptions if it doesn't find anything
     wireless = get_wireless_devices(exclude=excludes)
-    if not wireless: return None
+    # set our little state token
     congiured_mesh = False
+    # walk through all the interfaces until we find a working one or run out
     for iface in wireless:
         mesh = MeshIFace(iface)
         if mesh.configure():
             congiured_mesh = True
             break
+    # if nothing is configured stop here
     if not configured_mesh: return None
+    # else load up the mesh interface
     mesh.load()
-    # Setup client interface.
+    # and setup the client interface.
     client = ClientIFace(mesh.device, client_number)
     client.load()
     # add the commotion-wireless route

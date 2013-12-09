@@ -2,7 +2,7 @@
 
 SHELL = /bin/bash
 PRGNAM = will_it_mesh
-VERSION =
+VERSION = $(shell git rev-parse --short HEAD)
 MODORDER = 001-
 DESTDIR?=$(PKGBUILDDIR)/$(PRGNAM)
 ## Variables that should be inherited from the parent Makefile or the environment

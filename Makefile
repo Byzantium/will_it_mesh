@@ -1,4 +1,4 @@
-.EXPORT_ALL_VARIABLES
+.EXPORT_ALL_VARIABLES:
 
 SHELL = /bin/bash
 PRGNAM = will_it_mesh

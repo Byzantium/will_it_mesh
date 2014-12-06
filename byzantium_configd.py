@@ -1,7 +1,11 @@
 #!/usr/bin/python
-
 # -*- coding: utf-8 -*-
 # vim: set expandtab tabstop=4 shiftwidth=4 :
+
+# Copyright (C) 2013 Project Byzantium
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or any later version.
 
 # byzantium_configd.py - A (relatively) simple daemon that automatically
 # configures wireless interfaces on a Byzantium node.  No user interaction is
@@ -85,8 +89,9 @@ if len(wireless):
     # chipsets are pokey (coughAtheroscough) and silently reset themselves if
     # you try to configure them too rapidly, meaning that they drop out of
     # ad-hoc mode.
-    break_flag = False
-    while True:
+    success = False
+    for try_num in range(3):
+        print "Attempting to configure the wireless interface. Try:", try_num
         # Configure the wireless chipset.
         command = ['/sbin/iwconfig', interface, 'mode', 'ad-hoc']
         subprocess.Popen(command)
@@ -109,44 +114,44 @@ if len(wireless):
 
         # Test the interface's current configuration.  Go back to the top of
         # the configuration loop and try again if it's not what we expect.
+        Mode = False
+        Essid = False
+        Bssid = False
+        Frequency = False
         for line in configuration:
-            if re.search("Mode|ESSID|Cell|Frequency", line):
-                line = line.split(' ')
-            else:
-                continue
-
             # Ad-hoc mode?
-            if 'Mode' in line:
-                mode = line[0].split(':')[1]
-                if mode != 'Ad-Hoc':
-                    break_flag = True
-                    break
+            match = re.search('Mode:([\w-]+)', line)
+            if match and match.group(1) == 'Ad-Hoc':
+                print "Mode is correct."
+                Mode = True
 
             # Correct ESSID?
-            if 'ESSID' in line:
-                ESSID = line[-1].split(':')[1]
-                if ESSID != essid:
-                    break_flag = True
-                    break
+            match = re.search('ESSID:"([\w]+)"', line)
+            if match and match.group(1) == essid:
+                print "ESSID is correct."
+                Essid = True
 
             # Correct BSSID?
-            if 'Cell' in line:
-                BSSID = line[-1]
-                if BSSID != bssid:
-                    break_flag = True
-                    break
+            match = re.search('Cell: (([\dA-F][\dA-F]:){5}[\dA-F][\dA-F])', line)
+            if match and match.group(1) == bssid:
+                print "BSSID is correct."
+                Bssid = True
 
             # Correct frequency (because iwconfig doesn't report channels)?
-            if 'Frequency' in line:
-                FREQUENCY = line[2].split(':')[1]
-                if FREQUENCY != frequency:
-                    break_flag = True
-                    break
+            match = re.search('Frequency:([\d.]+)', line)
+            if match and match.group(1) == frequency:
+                print "Channel is correct."
+                Frequency = True
 
         # "Victory is mine!"
         #     --Stewie, _Family Guy_
-        if not(break_flag):
+        if Mode and Essid and Bssid and Frequency:
+            success = True
             break
+        else:
+            print "Failed to setup the interface properly. Retrying..."
+    if not success:
+        sys.exit(1)
 
     # Turn up the interface.
     command = ['/sbin/ifconfig', interface, 'up']
@@ -158,7 +163,7 @@ if len(wireless):
     while ip_in_use:
         # Generate a pseudorandom IP address for the mesh interface.
         addr = '192.168.'
-        addr = addr + str(random.randint(0, 254)) + '.'
+        addr = addr + str(random.randint(0, 255)) + '.'
         addr = addr + str(random.randint(1, 254))
 
         # Use arping to see if anyone's claimed it.
@@ -207,6 +212,7 @@ if len(wireless):
     print "Adding Commotion route..."
     command = ['/sbin/route', 'add', '-net', commotion_network, 'netmask',
                commotion_netmask, 'dev', interface]
+    commotion_route_return = subprocess.Popen(command)
 
     # Start the captive portal daemon on that interface.
     captive_portal_daemon = ['/usr/local/sbin/captive_portal.py', '-i',
@@ -215,6 +221,10 @@ if len(wireless):
     captive_portal_return = subprocess.Popen(captive_portal_daemon)
     time.sleep(5)
     print "Started captive portal daemon."
+else:
+    # There is no wireless interface.  Don't even bother continuing.
+    print "ERROR: I wasn't able to find a wireless interface to configure.  ABENDing."
+    sys.exit(1)
 
 # Build a string which can be used as a template for an /etc/hosts style file.
 (octet_one, octet_two, octet_three, _) = client_ip.split('.')
@@ -223,9 +233,9 @@ prefix = octet_one + '.' + octet_two + '.' + octet_three + '.'
 # Make an /etc/hosts.mesh file, which will be used by dnsmasq to resolve its
 # mesh clients.
 hosts = open(hostsmesh, "w")
-line = prefix + str('1') + '\tbyzantium.byzantium.mesh\n'
+line = prefix + str('1') + '\tbyzantium.mesh\n'
 hosts.write(line)
-for i in range(2, 255):
+for i in range(2, 254):
     line = prefix + str(i) + '\tclient-' + prefix + str(i) + '.byzantium.mesh\n'
     hosts.write(line)
 hosts.close()
